@@ -24,9 +24,16 @@
 <div id="migration" class="migration hidden" role="status" aria-live="polite"><b>HOST MIGRATION</b><span id="migration-text">Electing a new authoritative peer…</span></div>
 <div class="arena-shell"><canvas id="arena" width="1000" height="600" aria-label="DefinitelyNotPong game arena"></canvas><div class="scanlines"></div></div>
 <div class="mobile-controls" aria-label="Movement controls"><button id="move-negative" aria-label="Move negative">◀ / ▲</button><button id="move-positive" aria-label="Move positive">▶ / ▼</button></div>
-<div class="game-meta"><span id="host-state">HOST: LOCAL</span><span id="snapshot-state">SNAPSHOT: 0</span><span id="player-count">PLAYERS: 2/12</span></div>
-<div id="room-tools" class="room-tools hidden"><div><label>ROOM CODE</label><strong id="display-code"></strong></div><button id="copy-link">COPY INVITE LINK</button><button id="simulate-migration" class="ghost">SIMULATE HOST LOSS</button></div>
-<p class="help">Move with <kbd>W</kbd>/<kbd>S</kbd> or arrow keys. Top/bottom paddles use horizontal keys. Touch controls adapt automatically.</p>
+<div class="game-meta"><span id="host-state">HOST: LOCAL</span><span id="snapshot-state">SNAPSHOT: 0</span><span id="player-count">PLAYERS: 2/2</span><span id="channel-health">CHANNEL: OFFLINE</span></div>
+<div id="room-tools" class="room-tools hidden">
+  <div><label>ROOM CODE</label><strong id="display-code"></strong></div><button id="copy-link">COPY INVITE LINK</button>
+  <div class="signal-actions"><button id="create-offer">1 · CREATE OFFER</button><button id="apply-offer">2 · APPLY OFFER + CREATE ANSWER</button><button id="apply-answer">3 · APPLY ANSWER</button></div>
+  <label for="local-signal">YOUR SIGNAL (copy to the other browser)</label><textarea id="local-signal" readonly rows="5"></textarea>
+  <label for="remote-signal">REMOTE SIGNAL (paste from the other browser)</label><textarea id="remote-signal" rows="5" placeholder="Paste offer or answer JSON"></textarea>
+  <p id="signal-status" class="help" role="status" aria-live="polite">Manual signaling keeps this static-host compatible. STUN discovers routes; restrictive networks may still require TURN.</p>
+  <div><b>ROSTER</b><span id="roster">Waiting for peer…</span></div>
+</div>
+<p class="help">Move with <kbd>W</kbd>/<kbd>S</kbd> or arrow keys. The host simulates; the guest sends bounded input over an authenticated data channel.</p>
 </section>
 </main><footer>STATIC P2P CONCEPT · VALIDATED MESSAGES · DETERMINISTIC HOST ELECTION</footer>
 <script type="module" src="js/app.mjs"></script></body></html>

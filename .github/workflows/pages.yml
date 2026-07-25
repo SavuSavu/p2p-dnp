@@ -23,7 +23,9 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: v1/package-lock.json
+          cache-dependency-path: |
+            v1/package-lock.json
+            v2/package-lock.json
       - name: Test root artifact
         run: node --test tests/*.test.mjs
       - name: Test v1
@@ -35,10 +37,15 @@ jobs:
           npm run test:integration
       - name: Test v2
         working-directory: v2
-        run: npm test
+        run: |
+          npm ci
+          npm test
+          npm run test:integration
       - name: Test v3
         working-directory: v3
-        run: npm test
+        run: |
+          npm test
+          npm run test:p2p
 
   deploy:
     environment:

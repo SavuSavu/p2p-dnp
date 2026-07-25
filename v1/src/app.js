@@ -3,6 +3,7 @@ import { createGame, stepGame, moveAi, scoreSnapshot } from './game.js';
 import { encodeSignal, decodeSignal, inviteUrl, matchmakingStatus } from './signaling.js';
 import { PROTOCOL_VERSION } from './protocol.js';
 import { createHostSession, createGuestSession, receiveHostMessage, receiveGuestMessage, disconnectHostChannel } from './session.js';
+import { createNegotiation, offerCreated, offerShared, acceptRemoteSignal, resetNegotiation, markConnected, negotiationView } from './negotiation.js';
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -20,6 +21,8 @@ let pendingPc = null;
 let channels = [];
 let guestRoomCode = '';
 let networkSession = null;
+let negotiation = null;
+let peerConnections = [];
 const channelIds = new WeakMap();
 
 const canvas = $('#game');
@@ -72,16 +75,18 @@ function beginPrivate(code, creator) {
     code, adminId: null, players: [{ id: peerId, name: playerName }], assignments: [{ id: peerId, name: playerName, team: 'right', edge: 'side', half: 0 }]
   };
   networkSession = creator ? createHostSession(room) : null;
+  negotiation = createNegotiation(mode, peerId);
   game = createGame(900, 600);
   $('.signaling').classList.remove('hidden');
   $('.invite').classList.remove('hidden');
-  $('#hostSignal').classList.toggle('hidden', !creator);
-  $('#guestSignal').classList.toggle('hidden', creator);
+
   $('#adminBadge').textContent = creator ? 'ADMIN' : 'GUEST';
   $('#roomCode').textContent = code;
   $('#inviteLink').value = inviteUrl(location.href, code);
   updateRoomUi();
-  setMessage(creator ? 'ROOM OPEN · CREATE AN OFFER TO CONNECT' : 'PASTE THE HOST OFFER BELOW');
+  resetConnectionTransport();
+  renderNegotiation();
+  setMessage(creator ? 'ROOM OPEN · FOLLOW STEP 1 BELOW' : 'FOLLOW STEP 1 BELOW');
   show('room');
 }
 
@@ -99,7 +104,47 @@ $('#joinContinue').addEventListener('click', () => {
   $('#joinError').textContent = '';
   beginPrivate(code, false);
 });
-$('#leaveRoom').addEventListener('click', () => { channels.forEach((c) => c.close()); channels = []; pendingPc?.close(); pendingPc = null; networkSession = null; room = null; mode = ''; enterLobby(); });
+$('#leaveRoom').addEventListener('click', () => { closeOldTransports(); networkSession = null; negotiation = null; room = null; mode = ''; enterLobby(); });
+
+function closeOldTransports() {
+  const oldChannels = [...channels];
+  channels = [];
+  oldChannels.forEach((channel) => { try { channel.close(); } catch {} });
+  const oldPeers = [...peerConnections];
+  peerConnections = [];
+  oldPeers.forEach((pc) => { try { pc.close(); } catch {} });
+  pendingPc = null;
+}
+
+function resetConnectionTransport() {
+  closeOldTransports();
+  $('#signalIn').value = '';
+  $('#signalOut').value = '';
+  $('#rtcState').textContent = 'not connected';
+  $('#netBadge').textContent = 'LOCAL';
+}
+
+function renderNegotiation() {
+  if (!negotiation) return;
+  const view = negotiationView(negotiation);
+  $('#negotiationStep').textContent = view.instruction;
+  $('#rtcState').textContent = view.status;
+  $('#signalOutType').textContent = view.outputType;
+  $('#signalInType').textContent = view.inputType;
+  $('#makeOffer').disabled = !view.canCreateOffer;
+  $('#applySignal').disabled = !view.canApplySignal;
+  $('#copySignal').disabled = !view.canCopySignal;
+}
+
+function retryConnection() {
+  resetConnectionTransport();
+  negotiation = resetNegotiation(negotiation);
+  if (mode === 'host') networkSession = createHostSession(room);
+  else networkSession = null;
+  renderNegotiation();
+}
+
+$('#resetConnection').addEventListener('click', retryConnection);
 
 function updateRoomUi() {
   if (!room) return;
@@ -124,7 +169,9 @@ function waitForIce(pc) {
 }
 
 function makePeer() {
-  const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  const testMode = new URL(location.href).searchParams.has('test');
+  const pc = new RTCPeerConnection({ iceServers: testMode ? [] : [{ urls: 'stun:stun.l.google.com:19302' }] });
+  peerConnections.push(pc);
   pc.addEventListener('connectionstatechange', () => {
     $('#rtcState').textContent = pc.connectionState;
     $('#netBadge').textContent = pc.connectionState === 'connected' ? 'P2P LIVE' : 'LOCAL';
@@ -138,6 +185,7 @@ function attachChannel(channel, pc) {
   if (mode === 'guest') networkSession = createGuestSession(room.code, { id: peerId, name: playerName }, channelId);
   channels.push(channel);
   channel.addEventListener('open', () => {
+    if (negotiation) { negotiation = markConnected(negotiation); renderNegotiation(); }
     $('#rtcState').textContent = 'connected'; setMessage('DIRECT PEER CONNECTION ESTABLISHED');
     safeSend(channel, { v: PROTOCOL_VERSION, type: 'hello', peer: { id: peerId, name: playerName }, code: guestRoomCode || room.code });
     setTimeout(() => setMessage(''), 1500);
@@ -184,22 +232,36 @@ function handleNetwork(raw, channel) {
 
 $('#makeOffer').addEventListener('click', async () => {
   try {
+    if (!negotiationView(negotiation).canCreateOffer) throw new Error('Reset before creating another offer');
+    resetConnectionTransport();
+    const negotiationId = crypto.randomUUID();
     const pc = makePeer(); const channel = pc.createDataChannel('dnp', { ordered: true }); attachChannel(channel, pc);
     await pc.setLocalDescription(await pc.createOffer()); await waitForIce(pc); pendingPc = pc;
-    $('#signalOut').value = encodeSignal({ kind: 'offer', roomCode: room.code, name: playerName, description: pc.localDescription });
+    negotiation = offerCreated(negotiation, negotiationId);
+    $('#signalOut').value = encodeSignal({ kind: 'offer', roomCode: room.code, senderId: peerId, negotiationId, name: playerName, description: pc.localDescription });
+    negotiation = offerShared(negotiation);
+    $('#signalIn').value = '';
+    renderNegotiation();
   } catch (error) { $('#rtcState').textContent = error.message; }
 });
 $('#applySignal').addEventListener('click', async () => {
   try {
     const signal = decodeSignal($('#signalIn').value.trim());
-    if (signal.roomCode !== room.code) throw new Error('Signal belongs to another room');
+    const accepted = acceptRemoteSignal(negotiation, signal, room.code);
     if (signal.kind === 'offer') {
       const pc = makePeer(); pc.addEventListener('datachannel', (event) => attachChannel(event.channel, pc));
       await pc.setRemoteDescription(signal.description); await pc.setLocalDescription(await pc.createAnswer()); await waitForIce(pc); pendingPc = pc;
-      $('#signalOut').value = encodeSignal({ kind: 'answer', roomCode: room.code, name: playerName, description: pc.localDescription });
-    } else if (signal.kind === 'answer' && pendingPc) { await pendingPc.setRemoteDescription(signal.description); }
-    else throw new Error('Expected an offer, or create an offer before applying an answer');
-    $('#rtcState').textContent = 'handshake applied';
+      negotiation = accepted.state;
+      $('#signalOut').value = encodeSignal({ kind: 'answer', roomCode: room.code, senderId: peerId, negotiationId: signal.negotiationId, name: playerName, description: pc.localDescription });
+      $('#signalIn').value = '';
+    } else {
+      if (!pendingPc || pendingPc.signalingState !== 'have-local-offer') throw new Error('Local offer is no longer active; reset and create a new offer');
+      await pendingPc.setRemoteDescription(signal.description);
+      negotiation = accepted.state;
+      $('#signalIn').value = '';
+      $('#signalOut').value = '';
+    }
+    renderNegotiation();
   } catch (error) { $('#rtcState').textContent = error.message; }
 });
 async function copyFrom(selector, button) { try { await navigator.clipboard.writeText($(selector).value); const old = button.textContent; button.textContent = 'COPIED'; setTimeout(() => button.textContent = old, 1000); } catch { $(selector).select(); } }
@@ -251,7 +313,10 @@ requestAnimationFrame(loop);
 window.__dnp = {
   get room() { return room; },
   get game() { return game; },
-  get mode() { return mode; }
+  get mode() { return mode; },
+  get negotiationDiagnostics() {
+    return { phase: negotiation?.phase, openPeerConnections: peerConnections.filter((pc) => pc.connectionState !== 'closed').length, openChannels: channels.filter((channel) => channel.readyState !== 'closed').length };
+  }
 };
 
 const joinFromUrl = new URL(location.href).searchParams.get('join')?.toUpperCase();

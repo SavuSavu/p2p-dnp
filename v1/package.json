@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/game.test.js test/model.test.js test/signaling.test.js test/protocol.test.js test/session.test.js",
-    "test:integration": "node --test test/webrtc.integration.test.js"
+    "test": "node --test test/game.test.js test/model.test.js test/signaling.test.js test/protocol.test.js test/session.test.js test/negotiation.test.js",
+    "test:integration": "node --test test/manual-signaling.browser.test.js test/webrtc.integration.test.js"
   },
   "devDependencies": {
     "playwright": "^1.62.0"
