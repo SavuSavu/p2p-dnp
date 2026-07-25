@@ -46,6 +46,7 @@ jobs:
         working-directory: v3
         run: |
           npm ci
+          npx playwright install --with-deps chromium
           npm test
           npm run test:p2p
 
