@@ -1,4 +1,4 @@
-import { chromium } from '../../v1/node_modules/playwright/index.mjs';
+import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 

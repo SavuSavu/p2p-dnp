@@ -26,6 +26,7 @@ jobs:
           cache-dependency-path: |
             v1/package-lock.json
             v2/package-lock.json
+            v3/package-lock.json
       - name: Test root artifact
         run: node --test tests/*.test.mjs
       - name: Test v1
@@ -44,6 +45,7 @@ jobs:
       - name: Test v3
         working-directory: v3
         run: |
+          npm ci
           npm test
           npm run test:p2p
 
