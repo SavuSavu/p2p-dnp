@@ -1,0 +1,5 @@
+node_modules/
+tmp-integration/
+.tmp-integration/
+playwright-report/
+test-results/

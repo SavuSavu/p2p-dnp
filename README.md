@@ -23,17 +23,20 @@ Then open `http://localhost:8080/`.
 Each version has an independent Node test suite:
 
 ```sh
-(cd v1 && npm test)
+(cd v1 && npm ci && npm test)
+(cd v1 && npx playwright install firefox && npm run test:integration)
 (cd v2 && npm test)
 (cd v3 && npm test)
 ```
+
+V1's integration suite launches two isolated Firefox browser contexts, performs the manual WebRTC offer/answer exchange, verifies authoritative state and guest input replication, then checks host cleanup after the guest disconnects.
 
 ## Browser-only and P2P limitations
 
 - Single-player runs locally in the browser.
 - A room code is an invite/session hint, **not** a record in a server-side room database.
 - GitHub Pages cannot discover strangers, maintain a global matchmaking queue or relay WebRTC offers and answers on its own.
-- Private rooms can exchange WebRTC offer/answer text manually through another communication channel. Implementations differ in how fully they demonstrate this flow.
+- V1 private 1v1 rooms exchange WebRTC offer/answer text manually through another communication channel. The host runs authoritative physics; the guest sends bounded input and receives versioned room/state snapshots.
 - Global random matchmaking requires optional public rendezvous/signaling infrastructure. The included static artifact does not operate such a service; demo/fallback opponents are labeled accordingly.
 - Public STUN may assist NAT discovery, but no TURN relay is bundled. Direct connections can fail on restrictive networks.
 - Peers should be treated as untrusted. The variants validate or bound key inputs, but these are experimental browser demos rather than a production anti-cheat or identity system.

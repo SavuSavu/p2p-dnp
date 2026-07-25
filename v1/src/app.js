@@ -1,6 +1,8 @@
 import { sanitizeName, generateRoomCode, isRoomCode, createRoom, addPlayer, layoutForAssignment } from './model.js';
 import { createGame, stepGame, moveAi, scoreSnapshot } from './game.js';
 import { encodeSignal, decodeSignal, inviteUrl, matchmakingStatus } from './signaling.js';
+import { PROTOCOL_VERSION } from './protocol.js';
+import { createHostSession, createGuestSession, receiveHostMessage, receiveGuestMessage, disconnectHostChannel } from './session.js';
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -13,9 +15,12 @@ let humanInput = 0.5;
 let aiInput = 0.5;
 let lastTime = performance.now();
 let seq = 0;
+let stateSeq = 0;
 let pendingPc = null;
 let channels = [];
 let guestRoomCode = '';
+let networkSession = null;
+const channelIds = new WeakMap();
 
 const canvas = $('#game');
 const ctx = canvas.getContext('2d');
@@ -24,6 +29,9 @@ function show(id) { views.forEach((view) => $(`#${view}`).classList.toggle('hidd
 function setMessage(text) { $('#gameMessage').textContent = text; }
 function safeSend(channel, payload) { if (channel?.readyState === 'open') channel.send(JSON.stringify(payload)); }
 function broadcast(payload) { channels.forEach((channel) => safeSend(channel, payload)); }
+function packet(type, payload = {}) { return { v: PROTOCOL_VERSION, type, code: room.code, peerId, ...payload }; }
+function roomPacket() { return packet('room', { room }); }
+function statePacket() { return packet('state', { seq: stateSeq++, snapshot: scoreSnapshot(game), inputs: room.assignments.map((a) => ({ id: a.id, input: a.input ?? .5 })) }); }
 
 function enterLobby() {
   $('#playerName').textContent = playerName;
@@ -63,6 +71,7 @@ function beginPrivate(code, creator) {
   room = creator ? createRoom(code, { id: peerId, name: playerName }) : {
     code, adminId: null, players: [{ id: peerId, name: playerName }], assignments: [{ id: peerId, name: playerName, team: 'right', edge: 'side', half: 0 }]
   };
+  networkSession = creator ? createHostSession(room) : null;
   game = createGame(900, 600);
   $('.signaling').classList.remove('hidden');
   $('.invite').classList.remove('hidden');
@@ -90,7 +99,7 @@ $('#joinContinue').addEventListener('click', () => {
   $('#joinError').textContent = '';
   beginPrivate(code, false);
 });
-$('#leaveRoom').addEventListener('click', () => { channels.forEach((c) => c.close()); channels = []; pendingPc?.close(); pendingPc = null; room = null; mode = ''; enterLobby(); });
+$('#leaveRoom').addEventListener('click', () => { channels.forEach((c) => c.close()); channels = []; pendingPc?.close(); pendingPc = null; networkSession = null; room = null; mode = ''; enterLobby(); });
 
 function updateRoomUi() {
   if (!room) return;
@@ -124,31 +133,53 @@ function makePeer() {
 }
 
 function attachChannel(channel, pc) {
+  const channelId = crypto.randomUUID();
+  channelIds.set(channel, channelId);
+  if (mode === 'guest') networkSession = createGuestSession(room.code, { id: peerId, name: playerName }, channelId);
   channels.push(channel);
   channel.addEventListener('open', () => {
     $('#rtcState').textContent = 'connected'; setMessage('DIRECT PEER CONNECTION ESTABLISHED');
-    safeSend(channel, { type: 'hello', peer: { id: peerId, name: playerName }, code: guestRoomCode || room.code });
-    if (mode === 'host') safeSend(channel, { type: 'room', room });
+    safeSend(channel, { v: PROTOCOL_VERSION, type: 'hello', peer: { id: peerId, name: playerName }, code: guestRoomCode || room.code });
     setTimeout(() => setMessage(''), 1500);
   });
-  channel.addEventListener('close', () => { channels = channels.filter((item) => item !== channel); });
+  channel.addEventListener('close', () => {
+    channels = channels.filter((item) => item !== channel);
+    if (mode === 'host' && networkSession) {
+      const result = disconnectHostChannel(networkSession, channelId);
+      networkSession = result.session;
+      room = networkSession.room;
+      updateRoomUi();
+      if (result.broadcastRoom) broadcast(roomPacket());
+    }
+  });
   channel.addEventListener('message', (event) => handleNetwork(event.data, channel));
 }
 
 function handleNetwork(raw, channel) {
-  let message; try { message = JSON.parse(raw); } catch { return; }
-  if (message.type === 'hello' && mode === 'host' && message.code === room.code && room.players.length < 12) {
-    try { room = addPlayer(room, message.peer); } catch { return; }
-    updateRoomUi(); broadcast({ type: 'room', room });
-  } else if (message.type === 'room' && mode === 'guest' && message.room?.code === guestRoomCode && Array.isArray(message.room.players) && message.room.players.length <= 12) {
-    room = message.room; updateRoomUi(); setMessage('');
-  } else if (message.type === 'input' && mode === 'host') {
-    const assignment = room.assignments.find((a) => a.id === message.peerId);
-    if (assignment && Number.isFinite(message.value)) assignment.input = Math.min(1, Math.max(0, message.value));
-  } else if (message.type === 'state' && mode === 'guest') {
-    if (message.snapshot?.ball && message.snapshot?.score) { Object.assign(game.ball, message.snapshot.ball); game.score = message.snapshot.score; }
-    if (Array.isArray(message.inputs)) message.inputs.forEach(({ id, input }) => { const a = room.assignments.find((item) => item.id === id); if (a) a.input = input; });
-  }
+  const channelId = channelIds.get(channel);
+  try {
+    if (mode === 'host') {
+      const result = receiveHostMessage(networkSession, channelId, raw, performance.now());
+      networkSession = result.session;
+      room = networkSession.room;
+      if (result.closeChannel) channel.close();
+      if (result.accepted) updateRoomUi();
+      if (result.broadcastRoom) broadcast(roomPacket());
+      if (result.broadcastState) broadcast(statePacket());
+    } else if (mode === 'guest') {
+      const result = receiveGuestMessage(networkSession, channelId, raw);
+      networkSession = result.session;
+      if (result.closeChannel) channel.close();
+      if (result.accepted) {
+        room = networkSession.room;
+        if (networkSession.snapshot) {
+          Object.assign(game.ball, networkSession.snapshot.ball);
+          game.score = networkSession.snapshot.score;
+        }
+        updateRoomUi(); setMessage('');
+      }
+    }
+  } catch { channel.close(); }
 }
 
 $('#makeOffer').addEventListener('click', async () => {
@@ -178,7 +209,7 @@ $('#copyInvite').addEventListener('click', (e) => copyFrom('#inviteLink', e.curr
 function setInput(value) {
   humanInput = Math.min(1, Math.max(0, value));
   const mine = room?.assignments.find((a) => a.id === peerId); if (mine) mine.input = humanInput;
-  if (mode === 'guest') broadcast({ type: 'input', peerId, seq: seq++, value: humanInput });
+  if (mode === 'guest') broadcast(packet('input', { seq: seq++, value: humanInput }));
 }
 window.addEventListener('keydown', (event) => {
   if (!room) return;
@@ -210,12 +241,18 @@ function loop(now) {
   const dt = Math.min(.033, (now - lastTime) / 1000); lastTime = now;
   if (room) {
     if (mode === 'single') { aiInput = moveAi(aiInput, game.ball.y, dt); room.assignments[1].input = aiInput; stepGame(game, dt, draw()); }
-    else if (mode === 'host') { stepGame(game, dt, draw()); if (Math.floor(now / 50) !== Math.floor((now - dt * 1000) / 50)) broadcast({ type: 'state', snapshot: scoreSnapshot(game), inputs: room.assignments.map((a) => ({ id: a.id, input: a.input ?? .5 })) }); }
+    else if (mode === 'host') { stepGame(game, dt, draw()); if (Math.floor(now / 50) !== Math.floor((now - dt * 1000) / 50)) broadcast(statePacket()); }
     draw();
   }
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
+
+window.__dnp = {
+  get room() { return room; },
+  get game() { return game; },
+  get mode() { return mode; }
+};
 
 const joinFromUrl = new URL(location.href).searchParams.get('join')?.toUpperCase();
 if (playerName) { $('#name').value = playerName; enterLobby(); if (isRoomCode(joinFromUrl)) { $('#joinCode').value = joinFromUrl; show('joinPanel'); } }
