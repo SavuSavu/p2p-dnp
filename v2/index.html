@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#070913"><meta name="description" content="DefinitelyNotPong — fast peer-to-peer neon arena play.">
+  <title>DefinitelyNotPong · V2</title><link rel="manifest" href="manifest.webmanifest"><link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="noise"></div>
+  <header><a class="brand" href="./"><span class="mark">DNP</span><span>Definitely<span>Not</span>Pong</span></a><div class="status"><i></i><span id="net-status">LOCAL READY</span></div></header>
+  <main>
+    <section id="home" class="home">
+      <div class="hero"><p class="eyebrow">V2 · GAMEPLAY FIRST</p><h1>PONG.<br><em>REWIRED.</em></h1><p class="lede">Fast local play. Direct peer connections. No accounts, no application server, no nonsense.</p></div>
+      <div class="panel" id="name-gate"><div class="step">01 / IDENTIFY</div><label for="player-name">YOUR CALLSIGN</label><div class="field"><input id="player-name" maxlength="16" autocomplete="nickname" placeholder="ENTER NAME"><span id="name-count">0/16</span></div><p id="name-error" class="error" aria-live="polite"></p><button id="continue-btn" class="primary">ENTER THE ARENA <b>→</b></button></div>
+      <div class="panel modes hidden" id="mode-picker"><div class="step">02 / SELECT MODE</div><div class="welcome">READY, <strong id="welcome-name"></strong></div>
+        <button id="single-btn" class="mode featured"><span class="mode-icon">◐</span><span><b>SOLO // AI</b><small>Predictive opponent · first to 7</small></span><kbd>1</kbd></button>
+        <button id="random-btn" class="mode"><span class="mode-icon">⚡</span><span><b>RANDOM 1V1</b><small>Optional rendezvous required</small></span><kbd>2</kbd></button>
+        <button id="create-btn" class="mode"><span class="mode-icon">＋</span><span><b>CREATE ROOM</b><small>Host up to 12 peers</small></span><kbd>3</kbd></button>
+        <button id="join-btn" class="mode"><span class="mode-icon">↳</span><span><b>JOIN ROOM</b><small>Enter a six-character code</small></span><kbd>4</kbd></button>
+      </div>
+    </section>
+    <section id="lobby" class="lobby hidden"><div class="lobby-head"><button class="back" data-home>← EXIT</button><div><span>ROOM</span><strong id="room-code">------</strong></div><button id="copy-invite">COPY INVITE</button></div><div class="lobby-grid"><div class="roster-card"><div class="card-head"><h2>PLAYERS <span id="player-total">1/12</span></h2><span id="admin-badge">ADMIN</span></div><div id="roster"></div></div><div class="connect-card"><p class="eyebrow">DIRECT CONNECTION</p><h2>Peer signaling</h2><p>GitHub Pages cannot discover peers by room code alone. Exchange a compact offer/answer through any chat; gameplay then travels directly over WebRTC.</p><div class="actions"><button id="host-signal" class="primary">CREATE PEER OFFER</button><button id="join-signal">ANSWER PEER OFFER</button></div><div class="limit"><b>Browser-only networking</b><span>STUN assists direct NAT traversal. Some networks require TURN, which is not bundled.</span></div></div></div><button id="start-room" class="primary start">START MATCH <b>→</b></button></section>
+    <section id="game" class="game hidden"><div class="gamebar"><button class="back" data-home>← LEAVE</button><div id="match-label">SOLO // FIRST TO 7</div><div><button id="pause-btn">Ⅱ</button></div></div><div class="scoreboard"><div><span>TEAM CYAN</span><b id="score-left">0</b></div><i>:</i><div><b id="score-right">0</b><span>TEAM MAGENTA</span></div></div><div class="canvas-wrap"><canvas id="arena" width="1280" height="720" aria-label="DefinitelyNotPong game arena"></canvas><div id="countdown" class="countdown"></div><div id="result" class="result hidden"><small>MATCH COMPLETE</small><h2 id="result-title">VICTORY</h2><button id="rematch-btn" class="primary">REMATCH</button><button data-home>EXIT</button></div></div><div id="touch-controls"><button data-dir="-1" aria-label="Move up or left">◀</button><span>MOVE · W/S · ↑/↓</span><button data-dir="1" aria-label="Move down or right">▶</button></div></section>
+  </main>
+  <footer><span>STATIC // P2P // ZERO TRACKING</span><span>BUILD V2.0</span></footer>
+  <dialog id="signal-dialog"><form method="dialog"><button class="dialog-x" value="cancel">×</button><p class="eyebrow" id="signal-step">MANUAL SIGNAL</p><h2 id="signal-title">Connect a peer</h2><p id="signal-help"></p><textarea id="signal-data" spellcheck="false" placeholder="PASTE SIGNAL HERE"></textarea><div class="dialog-actions"><button type="button" id="signal-copy">COPY</button><button type="button" id="signal-next" class="primary">CONTINUE</button></div></form></dialog>
+  <div id="toast" role="status"></div><script type="module" src="js/app.mjs"></script>
+</body></html>

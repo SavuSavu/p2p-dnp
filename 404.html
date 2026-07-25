@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>DefinitelyNotPong — Redirecting</title></head>
+<body style="margin:0;display:grid;place-items:center;min-height:100vh;background:#07060b;color:#efeafc;font-family:system-ui"><main><h1>Finding that room…</h1><p id="status">Checking the invite URL.</p></main>
+<script>
+(() => {
+  const match = location.pathname.match(/^(.*\/(?:v1|v2|v3))\/join\/([A-HJ-NP-Z2-9]{6})\/?$/i);
+  if (match) {
+    const target = `${match[1]}/?join=${match[2].toUpperCase()}`;
+    location.replace(target + location.hash);
+    return;
+  }
+  const root = location.pathname.startsWith('/p2p-dnp/') ? '/p2p-dnp/' : '/';
+  const status = document.querySelector('#status');
+  status.textContent = 'This page does not exist. ';
+  const link = document.createElement('a');
+  link.style.color = '#a78bfa';
+  link.href = root;
+  link.textContent = 'Return to the launcher';
+  status.append(link);
+})();
+</script></body></html>

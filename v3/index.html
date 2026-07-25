@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#080b17"><title>DefinitelyNotPong — Resilience Edition</title>
+<link rel="manifest" href="manifest.webmanifest"><link rel="stylesheet" href="styles.css">
+</head><body>
+<header><a class="brand" href="./">DNP<span>///V3</span></a><div id="net-state" class="pill" role="status">LOCAL · READY</div></header>
+<main>
+<section id="gate" class="panel hero">
+<p class="eyebrow">PEER-RESILIENT ARCADE</p><h1>Definitely<br><em>Not Pong.</em></h1>
+<p class="lede">No accounts. No game server. Just a name and a browser.</p>
+<form id="name-form"><label for="player-name">CALLSIGN <span>1–16 characters</span></label><div class="field-row"><input id="player-name" maxlength="16" autocomplete="nickname" required placeholder="Enter your name"><button>ENTER ARENA</button></div><p id="name-error" class="error" aria-live="polite"></p></form>
+</section>
+<section id="lobby" class="panel hidden" aria-labelledby="welcome-title">
+<div class="section-head"><div><p class="eyebrow">CHOOSE MODE</p><h2 id="welcome-title">Welcome, <span id="welcome-name"></span></h2></div><button id="rename" class="ghost">CHANGE NAME</button></div>
+<div class="mode-grid">
+<button id="single" class="mode"><span class="mode-num">01</span><strong>SOLO CIRCUIT</strong><small>Human left · AI right</small></button>
+<button id="random" class="mode"><span class="mode-num">02</span><strong>RANDOM 1V1</strong><small>Demo queue · rendezvous optional</small></button>
+<button id="create" class="mode accent"><span class="mode-num">03</span><strong>CREATE ROOM</strong><small>Admin · up to 12 peers</small></button>
+<div class="mode join-box"><label for="room-code">JOIN PRIVATE ROOM</label><input id="room-code" maxlength="6" inputmode="text" placeholder="ABC123"><button id="join">JOIN</button></div>
+</div></section>
+<section id="game" class="hidden">
+<div class="game-top"><div><p class="eyebrow" id="mode-label">SOLO CIRCUIT</p><h2 id="room-title">LOCAL MATCH</h2></div><div class="score" aria-label="score"><span id="left-score">0</span><i>:</i><span id="right-score">0</span></div><button id="exit" class="ghost">EXIT</button></div>
+<div id="migration" class="migration hidden" role="status" aria-live="polite"><b>HOST MIGRATION</b><span id="migration-text">Electing a new authoritative peer…</span></div>
+<div class="arena-shell"><canvas id="arena" width="1000" height="600" aria-label="DefinitelyNotPong game arena"></canvas><div class="scanlines"></div></div>
+<div class="mobile-controls" aria-label="Movement controls"><button id="move-negative" aria-label="Move negative">◀ / ▲</button><button id="move-positive" aria-label="Move positive">▶ / ▼</button></div>
+<div class="game-meta"><span id="host-state">HOST: LOCAL</span><span id="snapshot-state">SNAPSHOT: 0</span><span id="player-count">PLAYERS: 2/12</span></div>
+<div id="room-tools" class="room-tools hidden"><div><label>ROOM CODE</label><strong id="display-code"></strong></div><button id="copy-link">COPY INVITE LINK</button><button id="simulate-migration" class="ghost">SIMULATE HOST LOSS</button></div>
+<p class="help">Move with <kbd>W</kbd>/<kbd>S</kbd> or arrow keys. Top/bottom paddles use horizontal keys. Touch controls adapt automatically.</p>
+</section>
+</main><footer>STATIC P2P CONCEPT · VALIDATED MESSAGES · DETERMINISTIC HOST ELECTION</footer>
+<script type="module" src="js/app.mjs"></script></body></html>

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="DefinitelyNotPong v1 — serverless-first browser pong with manual WebRTC signaling.">
+  <title>DefinitelyNotPong / Protocol v1</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header><a class="brand" href="./">DNP<span>/01</span></a><div id="netBadge" class="badge">LOCAL</div></header>
+  <main>
+    <section id="gate" class="panel gate">
+      <p class="eyebrow">PROTOCOL-FIRST PONG</p>
+      <h1>Definitely<br><em>Not</em> Pong.</h1>
+      <p class="lede">No account. No game server. Just your browser, a name, and—if you invite someone—a direct peer connection.</p>
+      <form id="nameForm"><label for="name">PLAYER NAME <small>1–16 characters</small></label><div class="input-row"><input id="name" maxlength="16" autocomplete="nickname" placeholder="Your callsign" required><button>ENTER</button></div><p id="nameError" class="error" role="alert"></p></form>
+    </section>
+
+    <section id="lobby" class="hidden">
+      <div class="lobby-head"><div><p class="eyebrow">CHOOSE A PROTOCOL</p><h2>Hello, <span id="playerName"></span>.</h2></div><button class="ghost" id="rename">CHANGE NAME</button></div>
+      <div class="mode-grid">
+        <button class="mode-card cyan" data-mode="single"><b>01</b><span>LOCAL</span><h3>Single player</h3><p>You on the left. An AI on the right. Fully offline.</p></button>
+        <button class="mode-card pink" data-mode="random"><b>02</b><span>DISCOVERY</span><h3>Random 1v1</h3><p>See what peer discovery can—and cannot—do on static hosting.</p></button>
+        <button class="mode-card yellow" data-mode="create"><b>03</b><span>PRIVATE</span><h3>Create room</h3><p>Become admin. Invite up to 11 peers via six-character code.</p></button>
+        <button class="mode-card violet" data-mode="join"><b>04</b><span>PRIVATE</span><h3>Join room</h3><p>Enter a code, then exchange a manual WebRTC handshake.</p></button>
+      </div>
+      <aside class="truth"><strong>STATIC WEB REALITY CHECK</strong><p>GitHub Pages can host the game, but cannot match strangers or deliver offers by itself. Private play uses copy/paste WebRTC signaling. STUN assists NAT discovery; without TURN, some networks will not connect.</p></aside>
+    </section>
+
+    <section id="randomPanel" class="panel hidden subpanel">
+      <button class="back">← MODES</button><p class="eyebrow">RANDOM 1V1</p><h2>There is no invisible server.</h2><div class="notice"><span>!</span><p id="matchStatus"></p></div><p>A globally random opponent requires a rendezvous endpoint to introduce two browsers. This build intentionally ships with none. For real peer play, create a private room and share its invite.</p><button id="randomDemo">PLAY LOCAL MATCHMAKING DEMO</button>
+    </section>
+
+    <section id="joinPanel" class="panel hidden subpanel">
+      <button class="back">← MODES</button><p class="eyebrow">JOIN PRIVATE ROOM</p><h2>Enter the six-character room code.</h2><div class="input-row"><input id="joinCode" maxlength="6" class="code-input" placeholder="ABC234"><button id="joinContinue">CONTINUE</button></div><p id="joinError" class="error"></p>
+    </section>
+
+    <section id="room" class="hidden">
+      <div class="room-top"><button id="leaveRoom" class="ghost">← LEAVE</button><div class="room-code"><small>ROOM</small><strong id="roomCode"></strong></div><div id="adminBadge" class="badge">ADMIN</div></div>
+      <div class="game-shell"><canvas id="game" width="900" height="600" aria-label="DefinitelyNotPong game arena"></canvas><div id="gameMessage" class="game-message"></div></div>
+      <div class="room-grid">
+        <section class="panel roster"><div class="section-head"><h3>ROOM MODEL</h3><span id="capacity">1 / 12</span></div><ol id="players"></ol><p class="hint">Assignment alternates left/right. Slots fill side → top → bottom; players 7–12 split each slot.</p></section>
+        <section class="panel signaling"><h3>DIRECT CONNECTION</h3><div id="hostSignal" class="hidden"><p>Send an offer to one guest at a time.</p><button id="makeOffer">CREATE PEER OFFER</button></div><div id="guestSignal" class="hidden"><p>Ask the room creator for an offer, paste it below, then return the generated answer.</p></div><label for="signalIn">PASTE REMOTE SIGNAL</label><textarea id="signalIn" placeholder="Paste offer or answer…"></textarea><button id="applySignal">APPLY REMOTE SIGNAL</button><label for="signalOut">YOUR SIGNAL TO SHARE</label><textarea id="signalOut" readonly placeholder="Generated signal appears here…"></textarea><div class="signal-actions"><button id="copySignal" class="ghost">COPY SIGNAL</button><span id="rtcState">not connected</span></div></section>
+        <section class="panel invite"><h3>INVITE</h3><label for="inviteLink">SHAREABLE ENTRY LINK</label><div class="input-row"><input id="inviteLink" readonly><button id="copyInvite">COPY</button></div><p>The link carries the room code only. WebRTC signaling still needs copy/paste because this site has no signaling backend.</p><h3>CONTROLS</h3><p><kbd>W</kbd><kbd>S</kbd> or arrow keys. Pointer/touch also moves your paddle on its allowed axis.</p></section>
+      </div>
+    </section>
+  </main>
+  <footer>STATIC HTML / CANVAS / WEBRTC DATA CHANNEL · NO CUSTOM SERVER</footer>
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
