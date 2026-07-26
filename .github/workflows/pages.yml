@@ -40,6 +40,7 @@ jobs:
         working-directory: v2
         run: |
           npm ci
+          npx playwright install --with-deps firefox
           npm run test:all
       - name: Test v3
         working-directory: v3
