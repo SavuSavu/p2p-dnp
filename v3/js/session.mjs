@@ -55,27 +55,34 @@ export function parseProtocolMessage(raw) {
   return null;
 }
 
-export function createHostSession({ room, hostId, hostName, now = 0, rateLimit = 90 }) {
+export function createHostSession({ room, hostId, hostName, now = 0, rateLimit = 90, packetLimit = 180 }) {
   return { role: 'host', room, epoch: 1, authorityId: hostId, localId: hostId, localName: hostName,
-    players: [{ id: hostId, name: hostName, side: 'left' }], channels: {}, outgoingSeq: 0, rateLimit,
+    players: [{ id: hostId, name: hostName, side: 'left' }], channels: {}, outgoingSeq: 0, rateLimit, packetLimit,
     health: { status: 'waiting', lastPacketAt: now, lastSnapshotAt: 0, rejected: 0, lastDisconnectReason: null } };
 }
 export function createGuestSession({ room, guestId, guestName }) {
   return { role: 'guest', room, epoch: 1, localId: guestId, localName: guestName, authorityId: null, hostChannelId: null,
     players: [], lastSeq: -1, health: { status: 'connecting', lastPacketAt: 0, lastSnapshotAt: 0, rejected: 0, lastDisconnectReason: null } };
 }
-const reject = (session, reason, closeChannel = false) => ({ session: { ...session, health: { ...session.health, rejected: session.health.rejected + 1 } }, accepted: false, reason, closeChannel, effects: {} });
+const reject = (session, reason, closeChannel = false) => ({ session: { ...session, health: { ...session.health, rejected: session.health.rejected + 1,
+  lastDisconnectReason: closeChannel ? reason : session.health.lastDisconnectReason } }, accepted: false, reason, closeChannel, effects: {} });
 
 export function transitionHost(session, channelId, raw, now) {
+  const channels = { ...session.channels };
+  const current = channels[channelId] || { peerId: null, lastSeq: -1, rateWindow: [], packetWindow: [] };
+  const packetWindow = (current.packetWindow || []).filter(t => now - t < 1000);
+  if (packetWindow.length >= session.packetLimit) return reject({ ...session, channels }, 'packet-budget-exceeded', true);
+  channels[channelId] = { ...current, packetWindow: [...packetWindow, now] };
+  session = { ...session, channels };
   const msg = parseProtocolMessage(raw);
   if (!msg || msg.room !== session.room || msg.epoch !== session.epoch) return reject(session, 'invalid-packet');
-  const channels = { ...session.channels };
   const existing = channels[channelId];
   if (msg.type === 'hello') {
-    if (existing && existing.peerId !== msg.peerId) return reject(session, 'identity-change', true);
-    if (session.players.some(p => p.id === msg.peerId) && existing?.peerId !== msg.peerId) return reject(session, 'duplicate-identity', true);
-    if (session.players.length >= 2 && !existing) return reject(session, 'room-full', true);
-    channels[channelId] = existing || { peerId: msg.peerId, lastSeq: -1, rateWindow: [] };
+    if (existing.peerId && existing.peerId !== msg.peerId) return reject(session, 'identity-change', true);
+    if (existing.peerId) return reject(session, 'hello-already-bound');
+    if (session.players.some(p => p.id === msg.peerId)) return reject(session, 'duplicate-identity', true);
+    if (session.players.length >= 2) return reject(session, 'room-full', true);
+    channels[channelId] = { ...existing, peerId: msg.peerId };
     const players = session.players.some(p => p.id === msg.peerId) ? session.players : [...session.players, { id: msg.peerId, name: msg.name, side: 'right' }];
     return { session: { ...session, channels, players, health: { ...session.health, status: 'connected', lastPacketAt: now } }, accepted: true, effects: { broadcastRoom: true } };
   }
@@ -97,6 +104,17 @@ export function transitionGuest(session, channelId, raw, now) {
   if (msg.seq <= session.lastSeq) return reject(session, 'replay');
   return { session: { ...session, lastSeq: msg.seq, players: msg.type === 'room' ? msg.players : session.players,
     health: { ...session.health, lastPacketAt: now, lastSnapshotAt: msg.type === 'state' ? now : session.health.lastSnapshotAt } }, accepted: true, message: msg, effects: {} };
+}
+
+export function updateGuestSnapshotHealth(session, now, channelOpen, staleAfterMs = 1000, disconnectAfterMs = 3000) {
+  const snapshotAgeMs = session.health.lastSnapshotAt > 0 ? Math.max(0, now - session.health.lastSnapshotAt) : null;
+  let status = session.health.status;
+  let lastDisconnectReason = session.health.lastDisconnectReason;
+  if (!channelOpen) status = 'disconnected';
+  else if (snapshotAgeMs !== null && snapshotAgeMs >= disconnectAfterMs) { status = 'disconnected'; lastDisconnectReason = 'snapshot-timeout'; }
+  else if (snapshotAgeMs !== null && snapshotAgeMs >= staleAfterMs) status = 'stale';
+  else if (snapshotAgeMs !== null) status = 'healthy';
+  return { session: { ...session, health: { ...session.health, status, lastDisconnectReason } }, snapshotAgeMs };
 }
 
 export function disconnectHostChannel(session, channelId, now) {

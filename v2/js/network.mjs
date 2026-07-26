@@ -95,7 +95,11 @@ function checked(message) {
 
 export const makeHello = (room, peer) => checked({ v: 2, type: 'hello', room, peer });
 export const makeInput = (room, peerId, value, seq) => checked({ v: 2, type: 'input', room, peerId, value, seq });
-export const makeRoom = (room, peerId, data) => checked({ v: 2, type: 'room', room, peerId, data });
+export const makeRoom = (room, peerId, data) => {
+  const message = checked({ v: 2, type: 'room', room, peerId, data });
+  if (message.peerId !== message.data.adminId) fail('invalid room authority');
+  return message;
+};
 export const makeState = (room, peerId, seq, state) => checked({ v: 2, type: 'state', room, peerId, seq, state });
 export const serializePacket = message => JSON.stringify(checked(message));
 

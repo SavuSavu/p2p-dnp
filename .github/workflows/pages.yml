@@ -40,8 +40,7 @@ jobs:
         working-directory: v2
         run: |
           npm ci
-          npm test
-          npm run test:integration
+          npm run test:all
       - name: Test v3
         working-directory: v3
         run: |

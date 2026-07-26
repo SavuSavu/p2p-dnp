@@ -111,7 +111,7 @@ test('guest binds the designated host hello and accepts room/state only from tha
   assert.equal(result.accepted, true);
   assert.deepEqual(result.session.snapshot, game);
   assert.equal(receiveGuestMessage(result.session, 'host-channel', wire(makeState(code, host.id, 1, game)), 4).reason, 'sequence');
-  assert.equal(receiveGuestMessage(session, 'host-channel', wire(makeRoom(code, 'attacker', fullRoom)), 5).closeChannel, true);
+  assert.equal(receiveGuestMessage(session, 'host-channel', wire({ v: 2, type: 'room', room: code, peerId: 'attacker', data: fullRoom }), 5).closeChannel, true);
 });
 
 test('host disconnect removes the bound guest and requests a clean room rebroadcast', () => {
@@ -123,6 +123,11 @@ test('host disconnect removes the bound guest and requests a clean room rebroadc
   assert.equal(result.session.channels.has('channel-a'), false);
 });
 
+
+test('room packet constructor requires the sender to be the room admin', () => {
+  assert.throws(() => makeRoom(code, guest.id, room), /authority/i);
+  assert.deepEqual(makeRoom(code, host.id, room).peerId, host.id);
+});
 
 test('packet constructors reject invalid outbound identity and sequence values', () => {
   assert.throws(() => makeHello(code, { id: '', name: 'X' }), /invalid/i);

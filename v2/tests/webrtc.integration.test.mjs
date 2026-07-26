@@ -1,9 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { extname, join, normalize } from 'node:path';
 import { firefox } from 'playwright';
 
-const baseUrl = 'http://127.0.0.1:4172/v2/';
+const root = new URL('../../', import.meta.url).pathname;
+
+async function startServer() {
+  const types = { '.html': 'text/html', '.mjs': 'text/javascript', '.css': 'text/css', '.webmanifest': 'application/manifest+json' };
+  const server = createServer(async (request, response) => {
+    try {
+      const pathname = new URL(request.url, 'http://localhost').pathname;
+      const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\//, '');
+      const file = normalize(join(root, relative.endsWith('/') ? `${relative}index.html` : relative));
+      if (!file.startsWith(root)) throw new Error('invalid path');
+      response.setHeader('content-type', types[extname(file)] || 'application/octet-stream');
+      response.end(await readFile(file));
+    } catch {
+      response.statusCode = 404;
+      response.end('not found');
+    }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  return { server, baseUrl: `http://127.0.0.1:${port}/v2/` };
+}
 
 async function waitForServer(url, timeoutMs = 10000) {
   const deadline = Date.now() + timeoutMs;
@@ -44,11 +66,8 @@ async function exchangeSignals(host, guest) {
 }
 
 test('two isolated browsers complete manual WebRTC, play host-authoritative 1v1, replicate state, and clean disconnect', { timeout: 60000 }, async t => {
-  const server = spawn('python3', ['-m', 'http.server', '4172', '--bind', '127.0.0.1'], {
-    cwd: new URL('../../', import.meta.url).pathname,
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-  t.after(() => server.kill('SIGTERM'));
+  const { server, baseUrl } = await startServer();
+  t.after(() => server.close());
   await waitForServer(baseUrl);
 
   const browser = await firefox.launch({ headless: true });
@@ -97,6 +116,26 @@ test('two isolated browsers complete manual WebRTC, play host-authoritative 1v1,
 
   await guestPage.getByRole('button', { name: '← LEAVE' }).click();
   await hostPage.waitForFunction(() => window.__dnpV2?.room?.players?.length === 1);
+  await hostPage.waitForFunction(() => window.__dnpV2?.paused === true && window.__dnpV2?.connected === false);
+  const ballWhenPaused = await hostPage.evaluate(() => ({ ...window.__dnpV2.game.ball }));
+  await hostPage.waitForTimeout(150);
+  const disconnected = await hostPage.evaluate(() => ({
+    ball: { ...window.__dnpV2.game.ball },
+    assignments: window.__dnpV2.room.assignments,
+    status: document.querySelector('#net-status').textContent,
+    notice: document.querySelector('#disconnect-notice').textContent,
+    actionVisible: !document.querySelector('#disconnect-action').classList.contains('hidden')
+  }));
+  assert.deepEqual(disconnected.ball, ballWhenPaused);
+  assert.equal(disconnected.assignments.length, 1);
+  assert.equal(disconnected.assignments[0].input, 0);
+  assert.match(disconnected.status, /DISCONNECTED/i);
+  assert.match(disconnected.notice, /PEER DISCONNECTED/i);
+  assert.equal(disconnected.actionVisible, true);
+  await hostPage.locator('#disconnect-action').click();
+  await hostPage.waitForFunction(() => !document.querySelector('#lobby').classList.contains('hidden'));
+  assert.equal(await hostPage.locator('#start-room').isVisible(), true);
+  assert.equal(await hostPage.locator('#host-signal').isVisible(), true);
   assert.deepEqual(await hostPage.locator('#roster .player-row:not(.open) b').allTextContents(), ['HOST']);
   assert.deepEqual(errors, []);
 });

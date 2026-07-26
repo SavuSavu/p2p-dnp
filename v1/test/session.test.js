@@ -123,6 +123,42 @@ test('guest accepts room and state only from its bound host channel', () => {
   assert.equal(result.session.room.assignments.find((item) => item.id === 'guest-1').input, 0.9);
 });
 
+test('guest rejects state inputs that are duplicated or not bound to the current roster', () => {
+  let guest = createGuestSession('ABC234', { id: 'guest-1', name: 'Guest' }, 'host-channel');
+  guest = receiveGuestMessage(guest, 'host-channel', JSON.stringify({
+    v: 1, type: 'hello', code: 'ABC234', peer: { id: 'host-1', name: 'Host' }
+  })).session;
+  const admitted = receiveHostMessage(
+    createHostSession(createRoom('ABC234', { id: 'host-1', name: 'Host' })), 'guest-channel', hello(), 1000
+  ).session.room;
+  guest = receiveGuestMessage(guest, 'host-channel', JSON.stringify({
+    v: 1, type: 'room', code: 'ABC234', peerId: 'host-1', room: admitted
+  })).session;
+  const state = (inputs) => JSON.stringify({
+    v: 1, type: 'state', code: 'ABC234', peerId: 'host-1', seq: 1,
+    snapshot: { ball: { x: 450, y: 300, vx: 100, vy: -40 }, score: { left: 1, right: 2 } },
+    inputs
+  });
+
+  let result = receiveGuestMessage(guest, 'host-channel', state([
+    { id: 'host-1', input: 0.2 }, { id: 'host-1', input: 0.9 }
+  ]));
+  assert.equal(result.accepted, false);
+  assert.equal(result.closeChannel, true);
+
+  result = receiveGuestMessage(guest, 'host-channel', state([
+    { id: 'host-1', input: 0.2 }, { id: 'attacker', input: 0.9 }
+  ]));
+  assert.equal(result.accepted, false);
+  assert.equal(result.closeChannel, true);
+
+  result = receiveGuestMessage(guest, 'host-channel', state([
+    { id: 'host-1', input: 0.2 }
+  ]));
+  assert.equal(result.accepted, false);
+  assert.equal(result.closeChannel, true);
+});
+
 test('guest rejects stale state sequences and rate limits host snapshots', () => {
   let guest = createGuestSession('ABC234', { id: 'guest-1', name: 'Guest' }, 'host-channel');
   guest = receiveGuestMessage(guest, 'host-channel', JSON.stringify({

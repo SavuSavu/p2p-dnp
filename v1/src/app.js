@@ -4,6 +4,7 @@ import { encodeSignal, decodeSignal, inviteUrl, matchmakingStatus } from './sign
 import { PROTOCOL_VERSION } from './protocol.js';
 import { createHostSession, createGuestSession, receiveHostMessage, receiveGuestMessage, disconnectHostChannel } from './session.js';
 import { createNegotiation, offerCreated, offerShared, acceptRemoteSignal, resetNegotiation, markConnected, negotiationView } from './negotiation.js';
+import { waitForIceGathering } from './ice.js';
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -23,13 +24,20 @@ let guestRoomCode = '';
 let networkSession = null;
 let negotiation = null;
 let peerConnections = [];
+let transportGeneration = 0;
+let forceIceTimeout = false;
 const channelIds = new WeakMap();
+const channelOwners = new WeakMap();
 
 const canvas = $('#game');
 const ctx = canvas.getContext('2d');
 const views = ['gate', 'lobby', 'randomPanel', 'joinPanel', 'room'];
 function show(id) { views.forEach((view) => $(`#${view}`).classList.toggle('hidden', view !== id)); }
 function setMessage(text) { $('#gameMessage').textContent = text; }
+function setCourtConnectionState(state) {
+  $('.game-shell').dataset.connectionState = state;
+  canvas.setAttribute('aria-label', state === 'connected' ? 'DefinitelyNotPong game arena' : 'DefinitelyNotPong waiting court');
+}
 function safeSend(channel, payload) { if (channel?.readyState === 'open') channel.send(JSON.stringify(payload)); }
 function broadcast(payload) { channels.forEach((channel) => safeSend(channel, payload)); }
 function packet(type, payload = {}) { return { v: PROTOCOL_VERSION, type, code: room.code, peerId, ...payload }; }
@@ -86,7 +94,8 @@ function beginPrivate(code, creator) {
   updateRoomUi();
   resetConnectionTransport();
   renderNegotiation();
-  setMessage(creator ? 'ROOM OPEN · FOLLOW STEP 1 BELOW' : 'FOLLOW STEP 1 BELOW');
+  setCourtConnectionState('waiting');
+  setMessage(creator ? 'WAITING — NOT CONNECTED · CREATE AN OFFER' : 'WAITING FOR HOST OFFER — NOT CONNECTED · PASTE IT BELOW');
   show('room');
 }
 
@@ -107,6 +116,7 @@ $('#joinContinue').addEventListener('click', () => {
 $('#leaveRoom').addEventListener('click', () => { closeOldTransports(); networkSession = null; negotiation = null; room = null; mode = ''; enterLobby(); });
 
 function closeOldTransports() {
+  transportGeneration += 1;
   const oldChannels = [...channels];
   channels = [];
   oldChannels.forEach((channel) => { try { channel.close(); } catch {} });
@@ -116,12 +126,33 @@ function closeOldTransports() {
   pendingPc = null;
 }
 
+function closeChannelOwner(channel) {
+  channels = channels.filter((item) => item !== channel);
+  const pc = channelOwners.get(channel);
+  if (!pc) return;
+  channelOwners.delete(channel);
+  peerConnections = peerConnections.filter((item) => item !== pc);
+  if (pendingPc === pc) pendingPc = null;
+  try { if (pc.connectionState !== 'closed') pc.close(); } catch {}
+}
+
+function showDisconnectedState(message) {
+  if (negotiation) negotiation = resetNegotiation(negotiation);
+  $('#netBadge').textContent = 'LOCAL';
+  setCourtConnectionState('waiting');
+  setMessage(message);
+  renderNegotiation();
+  $('#rtcState').textContent = 'disconnected';
+}
+
 function resetConnectionTransport() {
   closeOldTransports();
   $('#signalIn').value = '';
   $('#signalOut').value = '';
   $('#rtcState').textContent = 'not connected';
   $('#netBadge').textContent = 'LOCAL';
+  $('#iceStatus').textContent = 'READY TO GENERATE';
+  if (mode === 'host' || mode === 'guest') setCourtConnectionState('waiting');
 }
 
 function renderNegotiation() {
@@ -145,6 +176,11 @@ function retryConnection() {
 }
 
 $('#resetConnection').addEventListener('click', retryConnection);
+if (new URL(location.href).searchParams.has('test')) $('#iceTimeoutTest').classList.remove('hidden');
+$('#iceTimeoutTest').addEventListener('click', () => {
+  forceIceTimeout = !forceIceTimeout;
+  setIceStatus(forceIceTimeout ? 'TIMEOUT FALLBACK ENABLED' : 'READY TO GENERATE');
+});
 
 function updateRoomUi() {
   if (!room) return;
@@ -158,14 +194,23 @@ function updateRoomUi() {
   }));
 }
 
-function waitForIce(pc) {
-  if (pc.iceGatheringState === 'complete') return Promise.resolve();
-  return new Promise((resolve) => {
-    const timeout = setTimeout(resolve, 5000);
-    pc.addEventListener('icegatheringstatechange', () => {
-      if (pc.iceGatheringState === 'complete') { clearTimeout(timeout); resolve(); }
-    });
-  });
+function setIceStatus(status) {
+  $('#iceStatus').textContent = status;
+}
+
+async function gatherLocalDescription(pc, generation) {
+  setIceStatus('GATHERING CONNECTION CANDIDATES');
+  const options = {
+    graceMs: forceIceTimeout ? 0 : 5000,
+    isCurrent: () => transportGeneration === generation && peerConnections.includes(pc)
+  };
+  if (forceIceTimeout) options.isComplete = () => false;
+  const result = await waitForIceGathering(pc, options);
+  if (result.stale) return result;
+  setIceStatus(result.completeness === 'partial'
+    ? 'PARTIAL CANDIDATES — MAY NEED RETRY / TURN'
+    : 'OFFER READY — CANDIDATES COMPLETE');
+  return result;
 }
 
 function makePeer() {
@@ -173,6 +218,7 @@ function makePeer() {
   const pc = new RTCPeerConnection({ iceServers: testMode ? [] : [{ urls: 'stun:stun.l.google.com:19302' }] });
   peerConnections.push(pc);
   pc.addEventListener('connectionstatechange', () => {
+    if (!peerConnections.includes(pc)) return;
     $('#rtcState').textContent = pc.connectionState;
     $('#netBadge').textContent = pc.connectionState === 'connected' ? 'P2P LIVE' : 'LOCAL';
   });
@@ -182,22 +228,35 @@ function makePeer() {
 function attachChannel(channel, pc) {
   const channelId = crypto.randomUUID();
   channelIds.set(channel, channelId);
+  channelOwners.set(channel, pc);
   if (mode === 'guest') networkSession = createGuestSession(room.code, { id: peerId, name: playerName }, channelId);
   channels.push(channel);
   channel.addEventListener('open', () => {
     if (negotiation) { negotiation = markConnected(negotiation); renderNegotiation(); }
+    setCourtConnectionState('connected');
     $('#rtcState').textContent = 'connected'; setMessage('DIRECT PEER CONNECTION ESTABLISHED');
     safeSend(channel, { v: PROTOCOL_VERSION, type: 'hello', peer: { id: peerId, name: playerName }, code: guestRoomCode || room.code });
     setTimeout(() => setMessage(''), 1500);
   });
   channel.addEventListener('close', () => {
-    channels = channels.filter((item) => item !== channel);
+    closeChannelOwner(channel);
     if (mode === 'host' && networkSession) {
       const result = disconnectHostChannel(networkSession, channelId);
       networkSession = result.session;
       room = networkSession.room;
       updateRoomUi();
       if (result.broadcastRoom) broadcast(roomPacket());
+      showDisconnectedState('GUEST DISCONNECTED — RESET / RETRY');
+    } else if (mode === 'guest') {
+      networkSession = null;
+      room = {
+        code: guestRoomCode,
+        adminId: null,
+        players: [{ id: peerId, name: playerName }],
+        assignments: [{ id: peerId, name: playerName, team: 'right', edge: 'side', half: 0 }]
+      };
+      updateRoomUi();
+      showDisconnectedState('Host disconnected — reset/rejoin');
     }
   });
   channel.addEventListener('message', (event) => handleNetwork(event.data, channel));
@@ -234,11 +293,16 @@ $('#makeOffer').addEventListener('click', async () => {
   try {
     if (!negotiationView(negotiation).canCreateOffer) throw new Error('Reset before creating another offer');
     resetConnectionTransport();
+    const generation = transportGeneration;
+    setIceStatus('GENERATING OFFER');
     const negotiationId = crypto.randomUUID();
     const pc = makePeer(); const channel = pc.createDataChannel('dnp', { ordered: true }); attachChannel(channel, pc);
-    await pc.setLocalDescription(await pc.createOffer()); await waitForIce(pc); pendingPc = pc;
+    await pc.setLocalDescription(await pc.createOffer());
+    const ice = await gatherLocalDescription(pc, generation);
+    if (ice.stale) return;
+    pendingPc = pc;
     negotiation = offerCreated(negotiation, negotiationId);
-    $('#signalOut').value = encodeSignal({ kind: 'offer', roomCode: room.code, senderId: peerId, negotiationId, name: playerName, description: pc.localDescription });
+    $('#signalOut').value = encodeSignal({ kind: 'offer', roomCode: room.code, senderId: peerId, negotiationId, name: playerName, description: ice.description });
     negotiation = offerShared(negotiation);
     $('#signalIn').value = '';
     renderNegotiation();
@@ -249,10 +313,15 @@ $('#applySignal').addEventListener('click', async () => {
     const signal = decodeSignal($('#signalIn').value.trim());
     const accepted = acceptRemoteSignal(negotiation, signal, room.code);
     if (signal.kind === 'offer') {
+      const generation = transportGeneration;
       const pc = makePeer(); pc.addEventListener('datachannel', (event) => attachChannel(event.channel, pc));
-      await pc.setRemoteDescription(signal.description); await pc.setLocalDescription(await pc.createAnswer()); await waitForIce(pc); pendingPc = pc;
+      setIceStatus('GENERATING ANSWER');
+      await pc.setRemoteDescription(signal.description); await pc.setLocalDescription(await pc.createAnswer());
+      const ice = await gatherLocalDescription(pc, generation);
+      if (ice.stale) return;
+      pendingPc = pc;
       negotiation = accepted.state;
-      $('#signalOut').value = encodeSignal({ kind: 'answer', roomCode: room.code, senderId: peerId, negotiationId: signal.negotiationId, name: playerName, description: pc.localDescription });
+      $('#signalOut').value = encodeSignal({ kind: 'answer', roomCode: room.code, senderId: peerId, negotiationId: signal.negotiationId, name: playerName, description: ice.description });
       $('#signalIn').value = '';
     } else {
       if (!pendingPc || pendingPc.signalingState !== 'have-local-offer') throw new Error('Local offer is no longer active; reset and create a new offer');

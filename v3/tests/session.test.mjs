@@ -7,6 +7,7 @@ import {
   transitionHost,
   transitionGuest,
   disconnectHostChannel,
+  updateGuestSnapshotHealth,
 } from '../js/session.mjs';
 
 const room = 'ABC234';
@@ -44,6 +45,18 @@ test('host binds one guest identity and rejects duplicate or claimed-id changes'
   assert.equal(transitionHost(session, 'channel-b', hello('guest-1'), 22).closeChannel, true);
 });
 
+test('host ignores repeated post-binding hello without room broadcast amplification', () => {
+  let session = createHostSession({ room, hostId: 'host-1', hostName: 'Host', now: 0 });
+  session = transitionHost(session, 'c', hello('guest-1'), 1).session;
+
+  const repeated = transitionHost(session, 'c', hello('guest-1'), 2);
+  assert.equal(repeated.accepted, false);
+  assert.equal(repeated.reason, 'hello-already-bound');
+  assert.equal(repeated.closeChannel, false);
+  assert.equal(repeated.effects.broadcastRoom, undefined);
+  assert.deepEqual(repeated.session.players, session.players);
+});
+
 test('host rejects replayed and rate-flooded guest input', () => {
   let session = createHostSession({ room, hostId: 'host-1', hostName: 'Host', now: 0, rateLimit: 3 });
   session = transitionHost(session, 'c', hello('guest-1'), 1).session;
@@ -57,6 +70,23 @@ test('host rejects replayed and rate-flooded guest input', () => {
   result = transitionHost(session, 'c', input(4), 104);
   assert.equal(result.closeChannel, true);
   assert.equal(result.reason, 'rate-limit');
+});
+
+test('host enforces a channel-wide packet budget across invalid and repeated packets', () => {
+  let session = createHostSession({ room, hostId: 'host-1', hostName: 'Host', now: 0, packetLimit: 3 });
+  let result = transitionHost(session, 'c', '{bad', 10);
+  assert.equal(result.reason, 'invalid-packet');
+  session = result.session;
+  session = transitionHost(session, 'c', hello('guest-1'), 11).session;
+  result = transitionHost(session, 'c', hello('guest-1'), 12);
+  assert.equal(result.reason, 'hello-already-bound');
+  session = result.session;
+
+  result = transitionHost(session, 'c', '{still-bad', 13);
+  assert.equal(result.accepted, false);
+  assert.equal(result.closeChannel, true);
+  assert.equal(result.reason, 'packet-budget-exceeded');
+  assert.equal(result.session.health.lastDisconnectReason, 'packet-budget-exceeded');
 });
 
 test('guest binds host hello then accepts authority only from bound channel, peer and epoch', () => {
@@ -74,6 +104,29 @@ test('guest binds host hello then accepts authority only from bound channel, pee
   assert.equal(transitionGuest(guest, 'host-channel', state, 6).accepted, true);
   guest = transitionGuest(guest, 'host-channel', state, 6).session;
   assert.equal(transitionGuest(guest, 'host-channel', state, 7).accepted, false);
+});
+
+test('guest snapshot health ages from healthy to stale to disconnected while its channel stays open', () => {
+  let guest = createGuestSession({ room, guestId: 'guest-1', guestName: 'Guest' });
+  guest = transitionGuest(guest, 'host-channel', hello('host-1', 'Host'), 10).session;
+  const state = JSON.stringify({
+    v: 3, type: 'state', room, epoch: 1, authorityId: 'host-1', seq: 1, tick: 4,
+    ball: { x: .5, y: .5, vx: .2, vy: -.2 }, score: [0, 0],
+    players: [{ id: 'host-1', position: 0 }, { id: 'guest-1', position: .25 }],
+  });
+  guest = transitionGuest(guest, 'host-channel', state, 100).session;
+
+  let health = updateGuestSnapshotHealth(guest, 1099, true);
+  assert.equal(health.session.health.status, 'healthy');
+  assert.equal(health.snapshotAgeMs, 999);
+
+  health = updateGuestSnapshotHealth(health.session, 1100, true);
+  assert.equal(health.session.health.status, 'stale');
+  assert.equal(health.session.health.lastDisconnectReason, null);
+
+  health = updateGuestSnapshotHealth(health.session, 3100, true);
+  assert.equal(health.session.health.status, 'disconnected');
+  assert.equal(health.session.health.lastDisconnectReason, 'snapshot-timeout');
 });
 
 test('host disconnect removes bound guest and requests observable room rebroadcast', () => {

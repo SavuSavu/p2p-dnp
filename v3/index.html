@@ -8,32 +8,37 @@
 <main>
 <section id="gate" class="panel hero">
 <p class="eyebrow">PEER-RESILIENT ARCADE</p><h1>Definitely<br><em>Not Pong.</em></h1>
-<p class="lede">No accounts. No game server. Just a name and a browser.</p>
+<p class="lede">No accounts. No game server. This release is a 1v1 P2P milestone using manual signaling.</p>
 <form id="name-form"><label for="player-name">CALLSIGN <span>1–16 characters</span></label><div class="field-row"><input id="player-name" maxlength="16" autocomplete="nickname" required placeholder="Enter your name"><button>ENTER ARENA</button></div><p id="name-error" class="error" aria-live="polite"></p></form>
 </section>
 <section id="lobby" class="panel hidden" aria-labelledby="welcome-title">
 <div class="section-head"><div><p class="eyebrow">CHOOSE MODE</p><h2 id="welcome-title">Welcome, <span id="welcome-name"></span></h2></div><button id="rename" class="ghost">CHANGE NAME</button></div>
 <div class="mode-grid">
 <button id="single" class="mode"><span class="mode-num">01</span><strong>SOLO CIRCUIT</strong><small>Human left · AI right</small></button>
-<button id="random" class="mode"><span class="mode-num">02</span><strong>RANDOM 1V1</strong><small>Demo queue · rendezvous optional</small></button>
-<button id="create" class="mode accent"><span class="mode-num">03</span><strong>CREATE ROOM</strong><small>Admin · up to 12 peers</small></button>
+<button id="random" class="mode"><span class="mode-num">02</span><strong>RANDOM 1V1</strong><small>Local simulation · not matchmaking</small></button>
+<button id="create" class="mode accent"><span class="mode-num">03</span><strong>CREATE ROOM</strong><small>Manual WebRTC · 1v1 P2P milestone</small></button>
 <div class="mode join-box"><label for="room-code">JOIN PRIVATE ROOM</label><input id="room-code" maxlength="6" inputmode="text" placeholder="ABC123"><button id="join">JOIN</button></div>
 </div></section>
 <section id="game" class="hidden">
 <div class="game-top"><div><p class="eyebrow" id="mode-label">SOLO CIRCUIT</p><h2 id="room-title">LOCAL MATCH</h2></div><div class="score" aria-label="score"><span id="left-score">0</span><i>:</i><span id="right-score">0</span></div><button id="exit" class="ghost">EXIT</button></div>
-<div id="migration" class="migration hidden" role="status" aria-live="polite"><b>HOST MIGRATION</b><span id="migration-text">Electing a new authoritative peer…</span></div>
-<div class="arena-shell"><canvas id="arena" width="1000" height="600" aria-label="DefinitelyNotPong game arena"></canvas><div class="scanlines"></div></div>
+<div id="migration" class="migration hidden" role="status" aria-live="polite"><b>HOST MIGRATION</b><span id="migration-text">Future experiment — live migration is not implemented in this 1v1 milestone.</span></div>
+<div id="arena-shell" class="arena-shell"><canvas id="arena" width="1000" height="600" aria-label="DefinitelyNotPong game arena"></canvas><div class="scanlines"></div></div>
 <div class="mobile-controls" aria-label="Movement controls"><button id="move-negative" aria-label="Move negative">◀ / ▲</button><button id="move-positive" aria-label="Move positive">▶ / ▼</button></div>
 <div class="game-meta"><span id="host-state">HOST: LOCAL</span><span id="snapshot-state">SNAPSHOT: 0</span><span id="player-count">PLAYERS: 2/2</span><span id="channel-health">CHANNEL: OFFLINE</span></div>
 <div id="room-tools" class="room-tools hidden">
-  <div><label>ROOM CODE</label><strong id="display-code"></strong></div><button id="copy-link">COPY INVITE LINK</button>
+  <div class="signal-lead"><p id="signaling-phase" class="eyebrow">SIGNALING</p><div id="primary-signal-action"></div></div>
+  <div><label>ROOM CODE</label><strong id="display-code"></strong></div><button id="copy-link">COPY INVITE LINK</button><small>Invite link alone does not connect a peer; it only fills the room code. You must exchange OFFER and ANSWER below.</small>
+  <ol class="signal-script" aria-label="Host and guest connection steps"><li>Host sends invite link.</li><li>Host creates and sends OFFER through chat.</li><li>Guest pastes OFFER and sends ANSWER through chat.</li><li>Host pastes ANSWER.</li><li>Both wait for PEER CONNECTED.</li></ol>
   <div class="signal-actions"><button id="create-offer">1 · CREATE OFFER</button><button id="apply-offer">2 · APPLY OFFER + CREATE ANSWER</button><button id="apply-answer">3 · APPLY ANSWER</button></div>
   <label for="local-signal">YOUR SIGNAL (copy to the other browser)</label><textarea id="local-signal" readonly rows="5"></textarea>
+  <button id="copy-signal">COPY SIGNAL</button>
   <label for="remote-signal">REMOTE SIGNAL (paste from the other browser)</label><textarea id="remote-signal" rows="5" placeholder="Paste offer or answer JSON"></textarea>
-  <p id="signal-status" class="help" role="status" aria-live="polite">Manual signaling keeps this static-host compatible. STUN discovers routes; restrictive networks may still require TURN.</p>
+  <button id="reset-signal" class="ghost">RESET / RETRY</button>
+  <p id="signal-status" class="help" role="status" aria-live="polite">Manual signaling keeps this static-host compatible. STUN discovers routes; restrictive NAT may require TURN, which this static demo does not bundle.</p>
   <div><b>ROSTER</b><span id="roster">Waiting for peer…</span></div>
 </div>
+<div id="waiting-court" class="waiting-court hidden"><strong>COURT LOCKED · WAITING FOR AUTHENTICATED PEER</strong><span>The score and game stay paused until both browsers show PEER CONNECTED.</span></div>
 <p class="help">Move with <kbd>W</kbd>/<kbd>S</kbd> or arrow keys. The host simulates; the guest sends bounded input over an authenticated data channel.</p>
 </section>
-</main><footer>STATIC P2P CONCEPT · VALIDATED MESSAGES · DETERMINISTIC HOST ELECTION</footer>
+</main><footer>STATIC 1v1 P2P MILESTONE · VALIDATED MESSAGES · MANUAL SIGNALING</footer>
 <script type="module" src="js/app.mjs"></script></body></html>

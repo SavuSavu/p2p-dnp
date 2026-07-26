@@ -26,11 +26,67 @@ export function validatePeerMessage(message) {
 
 export const electHost = ids => ids.length ? [...ids].sort()[0] : null;
 
+function requireLocalDescription(pc) {
+  const description = pc.localDescription;
+  if (!description || typeof description.type !== 'string' || typeof description.sdp !== 'string' || !description.sdp.trim()) {
+    throw new Error('no local session description was produced; reset and retry signaling');
+  }
+  return { type: description.type, sdp: description.sdp };
+}
+
+export function gatherLocalDescription(pc, {
+  timeoutMs = 4000,
+  isCurrent = () => true,
+  signal,
+  setTimer = setTimeout,
+  clearTimer = clearTimeout
+} = {}) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer;
+    const cleanup = () => {
+      pc.removeEventListener('icecandidate', onCandidate);
+      pc.removeEventListener('icegatheringstatechange', onGatheringStateChange);
+      signal?.removeEventListener('abort', onAbort);
+      if (timer !== undefined) clearTimer(timer);
+    };
+    const finish = status => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (!isCurrent()) return reject(new Error('signaling attempt was reset; generate a fresh signal'));
+      try { resolve({ status, description: requireLocalDescription(pc) }); }
+      catch (error) { reject(error); }
+    };
+    const onCandidate = event => {
+      if (!isCurrent()) return finish('complete');
+      if (event.candidate === null) finish('complete');
+    };
+    const onGatheringStateChange = () => {
+      if (!isCurrent() || pc.iceGatheringState === 'complete') finish('complete');
+    };
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error('signaling attempt was reset; generate a fresh signal'));
+    };
+    pc.addEventListener('icecandidate', onCandidate);
+    pc.addEventListener('icegatheringstatechange', onGatheringStateChange);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) return onAbort();
+    if (pc.iceGatheringState === 'complete') return finish('complete');
+    timer = setTimer(() => finish('partial'), timeoutMs);
+  });
+}
+
 export function createPeerSession({ initiator, onStatus = () => {}, onOpen = () => {}, onRawMessage = () => {}, onClose = () => {} }) {
   const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
   const channelId = globalThis.crypto?.randomUUID?.() || `channel-${Date.now()}-${Math.random()}`;
   let channel;
   let closed = false;
+  let signalingAttempt = 0;
+  let gatherController = null;
   const ready = () => channel?.readyState === 'open';
   const reportClose = () => {
     if (closed) return;
@@ -41,10 +97,11 @@ export function createPeerSession({ initiator, onStatus = () => {}, onOpen = () 
   const attach = dataChannel => {
     channel = dataChannel;
     channel.binaryType = 'arraybuffer';
-    channel.onopen = () => { onStatus('connected'); onOpen(channelId); };
+    channel.onopen = () => { if (!closed) { onStatus('connected'); onOpen(channelId); } };
     channel.onclose = reportClose;
-    channel.onerror = () => onStatus('channel error');
+    channel.onerror = () => { if (!closed) onStatus('channel error'); };
     channel.onmessage = event => {
+      if (closed) return;
       if (typeof event.data !== 'string') return onStatus('ignored invalid packet');
       onRawMessage(event.data, channelId);
     };
@@ -52,31 +109,33 @@ export function createPeerSession({ initiator, onStatus = () => {}, onOpen = () 
   if (initiator) attach(pc.createDataChannel('dnp-v2', { ordered: true }));
   pc.ondatachannel = event => attach(event.channel);
   pc.onconnectionstatechange = () => {
+    if (closed) return;
     onStatus(pc.connectionState);
     if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) reportClose();
   };
-  const awaitIce = () => new Promise(resolve => {
-    if (pc.iceGatheringState === 'complete') return resolve();
-    const done = () => {
-      if (pc.iceGatheringState !== 'complete') return;
-      pc.removeEventListener('icegatheringstatechange', done);
-      resolve();
-    };
-    pc.addEventListener('icegatheringstatechange', done);
-    setTimeout(resolve, 4000);
-  });
+  const gather = attempt => {
+    gatherController?.abort();
+    gatherController = new AbortController();
+    return gatherLocalDescription(pc, {
+    timeoutMs: Number.isFinite(globalThis.__dnpIceGatherTimeoutMs) ? globalThis.__dnpIceGatherTimeoutMs : 4000,
+    isCurrent: () => !closed && attempt === signalingAttempt,
+    signal: gatherController.signal
+    });
+  };
   return {
     channelId,
     async createOffer() {
+      const attempt = ++signalingAttempt;
       await pc.setLocalDescription(await pc.createOffer());
-      await awaitIce();
-      return encodeSignal(pc.localDescription);
+      const gathering = await gather(attempt);
+      return { signal: encodeSignal(gathering.description), gathering: gathering.status };
     },
     async acceptOffer(encoded) {
+      const attempt = ++signalingAttempt;
       await pc.setRemoteDescription(decodeSignal(encoded));
       await pc.setLocalDescription(await pc.createAnswer());
-      await awaitIce();
-      return encodeSignal(pc.localDescription);
+      const gathering = await gather(attempt);
+      return { signal: encodeSignal(gathering.description), gathering: gathering.status };
     },
     async acceptAnswer(encoded) { await pc.setRemoteDescription(decodeSignal(encoded)); },
     send(message) {
@@ -86,6 +145,8 @@ export function createPeerSession({ initiator, onStatus = () => {}, onOpen = () 
     },
     ready,
     close() {
+      signalingAttempt += 1;
+      gatherController?.abort();
       try { channel?.close(); } catch {}
       pc.close();
       reportClose();

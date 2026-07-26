@@ -28,6 +28,7 @@ let stateSeq = 0;
 let countdown = 0;
 let lastInputSentAt = 0;
 let lastStateSentAt = 0;
+let signalAttempt = 0;
 
 const show = id => views.forEach(view => $(`#${view}`).classList.toggle('hidden', view !== id));
 const escapeHTML = value => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -37,7 +38,7 @@ const toast = message => {
   setTimeout(() => $('#toast').classList.remove('show'), 1800);
 };
 const debug = () => {
-  window.__dnpV2 = { role, identity, room, game, connected: peer?.ready() === true };
+  window.__dnpV2 = { role, identity, room, game, paused, connected: peer?.ready() === true };
 };
 
 function createIdentity(playerName) {
@@ -85,6 +86,12 @@ function openLobby(code, admin) {
   $('#room-code').textContent = code;
   $('#admin-badge').classList.toggle('hidden', !admin);
   $('#start-room').classList.toggle('hidden', !admin);
+  $('#host-signal').classList.toggle('hidden', !admin);
+  $('#host-steps').classList.toggle('hidden', !admin);
+  $('#join-signal').classList.toggle('hidden', admin);
+  $('#guest-steps').classList.toggle('hidden', admin);
+  $('#connection-role').textContent = admin ? 'HOST — create the connection' : 'GUEST — answer the host';
+  $('#net-status').textContent = 'LOCAL READY · PEER NOT CONNECTED';
   history.replaceState({}, '', `?join=${code}`);
   renderRoster();
   show('lobby');
@@ -101,6 +108,9 @@ function renderRoster() {
     const side = assignment ? `${assignment.edge.toUpperCase()} ${assignment.team.toUpperCase()}` : 'CONNECTING';
     return `<div class="player-row"><i></i><b>${escapeHTML(player.name)}</b><span>${admin}${side}</span></div>`;
   }).join('') + Array.from({ length: 2 - players.length }, () => '<div class="player-row open"><i style="background:#30374a"></i><b style="color:#566077">OPEN SLOT</b><span>WAITING</span></div>').join('');
+  const canStart = role === 'host' && players.length === 2 && peer?.ready() === true;
+  $('#start-room').disabled = !canStart;
+  $('#start-room').innerHTML = canStart ? 'START MATCH <b>→</b>' : 'START MATCH — WAITING FOR PEER <b>→</b>';
   debug();
 }
 
@@ -114,6 +124,8 @@ function startMatch() {
   game.players.forEach(player => { player.ai = false; });
   $('#match-label').textContent = `ROOM ${room.code} // FIRST TO 7`;
   $('#result').classList.add('hidden');
+  $('#disconnect-notice').classList.add('hidden');
+  $('#disconnect-action').classList.add('hidden');
   $('#score-left').textContent = '0';
   $('#score-right').textContent = '0';
   paused = false;
@@ -141,14 +153,43 @@ function startSolo() {
   debug();
 }
 
+function startRandomLocal() {
+  role = 'local';
+  room = null;
+  const opponents = ['NEON-GHOST', 'BYTE-BANDIT', 'LOCAL-RIVAL'];
+  game = createGame([name, opponents[Math.floor(Math.random() * opponents.length)]]);
+  game.players[1].ai = true;
+  $('#match-label').textContent = 'RANDOM LOCAL SIMULATION // FIRST TO 7';
+  $('#result').classList.add('hidden');
+  paused = false;
+  countdown = 3;
+  show('game');
+  last = performance.now();
+  raf = requestAnimationFrame(loop);
+  toast('LOCAL SIMULATION · NO MATCHMAKING');
+  debug();
+}
+
 $('#single-btn').onclick = startSolo;
-$('#random-btn').onclick = () => { toast('RENDEZVOUS NOT CONFIGURED · TRY MANUAL P2P'); openLobby(createRoomCode(), false); };
+$('#random-btn').onclick = startRandomLocal;
 $('#create-btn').onclick = () => openLobby(createRoomCode(), true);
 $('#join-btn').onclick = () => {
-  const raw = prompt('ENTER SIX-CHARACTER ROOM CODE');
-  if (!raw) return;
-  try { openLobby(normalizeRoomCode(raw), false); } catch (error) { toast(error.message.toUpperCase()); }
+  $('#mode-picker').classList.add('hidden');
+  $('#join-panel').classList.remove('hidden');
+  $('#join-error').textContent = '';
+  $('#join-code').focus();
 };
+function submitJoinCode() {
+  try {
+    $('#join-error').textContent = '';
+    openLobby(normalizeRoomCode($('#join-code').value), false);
+  } catch (error) {
+    $('#join-error').textContent = error.message.toUpperCase();
+  }
+}
+$('#join-continue').onclick = submitJoinCode;
+$('#join-code').onkeydown = event => { if (event.key === 'Enter') submitJoinCode(); };
+$('#join-cancel').onclick = () => { $('#join-panel').classList.add('hidden'); $('#mode-picker').classList.remove('hidden'); };
 $('#start-room').onclick = startMatch;
 $('#copy-invite').onclick = async () => { await navigator.clipboard.writeText(location.href); toast('INVITE LINK COPIED'); };
 
@@ -199,7 +240,17 @@ function handleGuestRaw(raw, channelId) {
 function handlePeerOpen(channelId) {
   if (role === 'guest') guestSession = createGuestSession(room.code, identity, channelId);
   sendPacket(makeHello(room.code, identity));
+  $('#net-status').textContent = 'PEER CONNECTED';
   debug();
+}
+
+function showDisconnectRecovery() {
+  paused = true;
+  input = 0;
+  cancelAnimationFrame(raf);
+  $('#net-status').textContent = 'DISCONNECTED · MATCH PAUSED';
+  $('#disconnect-notice').classList.remove('hidden');
+  $('#disconnect-action').classList.remove('hidden');
 }
 
 function handlePeerClose(channelId) {
@@ -210,12 +261,19 @@ function handlePeerClose(channelId) {
     if (result.broadcastRoom) broadcastRoom();
     renderRoster();
   }
+  if (role === 'guest') {
+    guestSession = null;
+    if (room) room = { ...room, players: [identity], assignments: [] };
+  }
+  if (game) showDisconnectRecovery();
   debug();
 }
 
 function setupSignal(initiator) {
+  const attempt = ++signalAttempt;
   const dialog = $('#signal-dialog');
   const area = $('#signal-data');
+  const status = $('#signal-status');
   const expectedRole = initiator ? 'host' : 'guest';
   if (role !== expectedRole) {
     toast(initiator ? 'CREATE A ROOM TO HOST' : 'JOIN A ROOM TO ANSWER');
@@ -231,6 +289,7 @@ function setupSignal(initiator) {
   });
   dialog.showModal();
   area.value = '';
+  status.textContent = initiator ? 'READY TO GENERATE OFFER' : 'PASTE THE HOST OFFER';
   if (initiator) {
     $('#signal-title').textContent = 'Create an offer';
     $('#signal-help').textContent = 'Generate, copy, and send this offer to your peer. Then paste their answer here.';
@@ -239,14 +298,30 @@ function setupSignal(initiator) {
     $('#signal-next').onclick = async () => {
       try {
         if (phase === 0) {
-          area.value = await peer.createOffer();
+          $('#signal-next').disabled = true;
+          status.textContent = 'GENERATING OFFER · GATHERING CONNECTION CANDIDATES…';
+          const offer = await peer.createOffer();
+          if (attempt !== signalAttempt) return;
+          if (!offer?.signal || !offer.signal.trim()) throw new Error('no offer signal was produced; reset and retry');
+          area.value = offer.signal;
+          status.textContent = offer.gathering === 'complete'
+            ? 'OFFER READY — COPY AND SEND IT TO THE GUEST'
+            : 'PARTIAL CANDIDATES — COPY THIS OFFER, BUT RETRY OR USE TURN IF DIRECT CONNECTION FAILS';
           $('#signal-next').textContent = 'ACCEPT PASTED ANSWER';
           phase = 1;
         } else {
+          if (!area.value.trim()) throw new Error('empty answer');
           await peer.acceptAnswer(area.value);
+          if (attempt !== signalAttempt) return;
           dialog.close();
         }
-      } catch { toast('INVALID OR EXPIRED SIGNAL'); }
+      } catch (error) {
+        if (attempt !== signalAttempt) return;
+        status.textContent = `ERROR — ${error.message.toUpperCase()}`;
+        toast('SIGNAL FAILED · CHECK THE VISIBLE ERROR');
+      } finally {
+        if (attempt === signalAttempt) $('#signal-next').disabled = false;
+      }
     };
   } else {
     $('#signal-title').textContent = 'Answer an offer';
@@ -254,10 +329,25 @@ function setupSignal(initiator) {
     $('#signal-next').textContent = 'GENERATE ANSWER';
     $('#signal-next').onclick = async () => {
       try {
-        area.value = await peer.acceptOffer(area.value);
+        if (!area.value.trim()) throw new Error('paste the host offer first');
+        $('#signal-next').disabled = true;
+        status.textContent = 'GENERATING ANSWER · GATHERING CONNECTION CANDIDATES…';
+        const answer = await peer.acceptOffer(area.value);
+        if (attempt !== signalAttempt) return;
+        if (!answer?.signal || !answer.signal.trim()) throw new Error('no answer signal was produced; reset and retry');
+        area.value = answer.signal;
+        status.textContent = answer.gathering === 'complete'
+          ? 'ANSWER READY — COPY AND SEND IT TO THE HOST'
+          : 'PARTIAL CANDIDATES — COPY THIS ANSWER, BUT RETRY OR USE TURN IF DIRECT CONNECTION FAILS';
         $('#signal-next').textContent = 'DONE';
+        $('#signal-next').disabled = false;
         $('#signal-next').onclick = () => dialog.close();
-      } catch { toast('INVALID OR EXPIRED SIGNAL'); }
+      } catch (error) {
+        if (attempt !== signalAttempt) return;
+        status.textContent = `ERROR — ${error.message.toUpperCase()}`;
+        toast('SIGNAL FAILED · CHECK THE VISIBLE ERROR');
+        $('#signal-next').disabled = false;
+      }
     };
   }
   debug();
@@ -266,8 +356,26 @@ function setupSignal(initiator) {
 $('#host-signal').onclick = () => setupSignal(true);
 $('#join-signal').onclick = () => setupSignal(false);
 $('#signal-copy').onclick = async () => { await navigator.clipboard.writeText($('#signal-data').value); toast('SIGNAL COPIED'); };
+const resetSignaling = () => {
+  signalAttempt += 1;
+  const oldPeer = peer;
+  peer = null;
+  oldPeer?.close();
+};
+$('#signal-dialog .dialog-x').addEventListener('click', resetSignaling);
+$('#signal-dialog').addEventListener('cancel', resetSignaling);
+
+$('#disconnect-action').onclick = () => {
+  cancelAnimationFrame(raf);
+  game = null;
+  $('#disconnect-notice').classList.add('hidden');
+  show('lobby');
+  renderRoster();
+  debug();
+};
 
 function goHome() {
+  signalAttempt += 1;
   cancelAnimationFrame(raf);
   const oldPeer = peer;
   peer = null;
@@ -361,7 +469,7 @@ addEventListener('keydown', event => setKey(event, 1));
 addEventListener('keyup', event => setKey(event, 0));
 $$('#touch-controls button').forEach(button => {
   const value = Number(button.dataset.dir);
-  button.onpointerdown = event => { event.preventDefault(); input = value; button.setPointerCapture(event.pointerId); };
+  button.onpointerdown = event => { event.preventDefault(); input = value; if (typeof button.setPointerCapture === 'function') button.setPointerCapture(event.pointerId); };
   button.onpointerup = button.onpointercancel = () => { input = 0; };
 });
 canvas.onpointerdown = event => {

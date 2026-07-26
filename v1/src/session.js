@@ -29,6 +29,11 @@ export function receiveGuestMessage(session, channelId, raw, now = Date.now()) {
     return { session: { ...session, hostPeerId: message.peerId, room: message.room }, accepted: true };
   }
   if (!session.room) return { session, accepted: false };
+  const rosterIds = new Set(session.room.assignments.map((assignment) => assignment.id));
+  const inputIds = message.inputs.map((input) => input.id);
+  if (inputIds.length !== rosterIds.size || new Set(inputIds).size !== inputIds.length || inputIds.some((id) => !rosterIds.has(id))) {
+    return { session, accepted: false, closeChannel: true };
+  }
   if (message.seq <= session.lastStateSeq) return { session, accepted: false, reason: 'sequence' };
   const stateTimes = session.stateTimes.filter((time) => now - time < 1000);
   if (stateTimes.length >= 60) return { session, accepted: false, reason: 'rate' };
